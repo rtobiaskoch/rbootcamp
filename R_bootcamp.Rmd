@@ -1,0 +1,358 @@
+---
+title: "R_bootcamp1"
+author: "Toby Koch"
+date: "2024-05-07"
+output: html_document
+---
+
+#INTRO TO MARKDOWN
+## run other scripts
+
+You can treat R Markdown like a pipeline and call other scripts
+```{r, pacman}
+source("scripts/some_cool_stuff.R")
+```
+
+Set rules for all the chunks
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+##bash
+You can run bash scripts. Say high to the Class bash!
+```{bash, engine.opts='-l'}
+name="Toby"
+coolness="is the best"
+
+echo "Hi Class! $name $coolness!"
+```
+
+
+##plot stuff
+```{r}
+library(ggplot2)
+
+# Generate some random data
+set.seed(123)
+data <- data.frame(
+  x = rnorm(100),
+  y = rnorm(100)
+)
+
+# Create a scatter plot
+ggplot(data, aes(x = x, y = y)) +
+  geom_point() +
+  labs(title = "Wow such data. Many points",
+       x = "X-axis Label",
+       y = "Y-axis Label") +
+  theme_classic()
+
+```
+
+
+#SET UP
+
+## manage packages
+```{r, include=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load("tidyverse")
+
+```
+
+
+## Set up your workspace
+```{r, include=FALSE}
+
+#remove objects
+rm(list = ls())
+
+#unload packages
+if (!require("pacman")) install.packages("pacman")
+pacman::p_unload()
+
+#load packages
+pacman::p_load("tidyverse", "palmerpenguins", "skimr", "janitor",
+               "patchwork", "RColorBrewer", "plotly")
+
+#define settings
+set.seed(1)
+theeeme = theme_minimal()
+```
+
+
+
+#READING IN DATA
+put your input data and output data in difference places
+```{r}
+penguins = penguins
+data0 = read.csv("data_input/penguins.csv", 
+                row.names = NULL)
+```
+
+
+##Pro tip reading in lists
+
+```{r, eval = FALSE}
+write.csv(penguins, "data_input/penguins.csv")
+
+# Group by species and split to a list
+penguins_list <- penguins %>%
+  group_by(species) %>%
+  group_split()
+
+# Write each element of the list to a CSV file
+walk2(penguins_list, unique(penguins$species), ~ write.csv(.x, paste0("data_input/penguins_", .y, ".csv"), row.names = FALSE))
+```
+
+```{r, eval = FALSE}
+
+t = list.files(pattern = "penguins_",
+               recursive = T,
+               full.names = T,
+               ignore.case = T)  
+
+data2 = t %>% 
+  map(~read.csv(.x)) %>%
+  bind_rows()
+
+```
+
+
+#add dupes
+```{r}
+data0 = data0 %>% bind_rows(head(data0, 5))
+
+```
+
+#KNOW YOUR DATA
+```{r}
+skimr::skim(data0)
+head(data0)
+sample = sample_n(data0, 10)
+dupes = janitor::get_dupes(data0) %>% distinct_all()
+
+
+```
+
+
+#CLEAN YOUR DATA
+
+
+##using pipes
+##snake case
+```{r}
+data1 = data0 %>%
+  rename("Bill@length+mm"= bill_length_mm)
+
+#the same as
+data1 = data0
+colnames(data1)[colnames(data1) == "bill_length_mm"] = "Bill@length+mm"
+
+data1 = data1 %>% clean_names()
+```
+
+Remove Duplicates
+```{r}
+#scapel
+#data3 = data2 %>% distinct(species, island, body_mass_g, sex, year ,.keep_all = T)
+
+#hammer
+data2 = data1 %>% distinct_all()
+
+```
+
+
+##Drop NA
+```{r}
+#the scapel
+data3 = data2 %>%
+  filter(!is.na(bill_length_mm)) #keep rows that are not (!) NA (is.na)
+
+#the hammer
+data3 = data2 %>%
+  drop_na()
+```
+
+##Filter
+
+sometimes you only want a subset of data and there are a few ways to do that
+```{r}
+#numerical 
+t = data3 %>% 
+  filter(body_mass_g > 4000)
+
+#character or factor
+t = data3 %>%
+  filter(species == "Chinstrap") # can also do opposite with !=
+
+#combine
+t = data3 %>%
+  filter(species == "Chinstrap" & body_mass_g > 4000)
+
+```
+
+
+##Create New Grouping variables using cut
+```{r}
+# Define the breakpoints for grouping by every thousand grams
+interval = 5
+breaks <- seq(0, (max(data3$bill_length_mm) + interval) / interval * interval, by =interval)
+labels = paste0(breaks[-length(breaks)], "-", breaks[-1])
+  
+  
+# Mutate and cut the body_mass_g column into groups of every thousand grams
+data4 <- data3 %>%
+       mutate(bill_length_grp = cut(bill_length_mm, 
+                                    breaks = breaks,
+                                    labels = labels)
+             )
+```
+
+Using case_when
+```{r}
+data4 = data4 %>% 
+  mutate(body_grp = case_when(body_mass_g < quantile(body_mass_g,.5) ~ "hungry",
+                              body_mass_g >= quantile(body_mass_g,.5) ~ "big boned"
+                              )
+         )
+
+```
+
+##Group Variables
+```{r}
+data4 %>% group_by(body_grp) %>%
+  summarise(n = n(),
+            mean = mean(body_mass_g),
+            sd = sd(body_mass_g))
+
+#can group by as many variables as you want
+data4 %>% group_by(body_grp, species) %>%
+  summarise(n = n(),
+            mean = mean(body_mass_g),
+            sd = sd(body_mass_g))
+
+#can only do mutate if you want to keep the dataframe
+t = data4 %>% group_by(body_grp, species) %>%
+    mutate(n = n())
+```
+
+
+##Splitting groups
+```{r}
+species_list = data4 %>% group_by(species) %>%
+  group_split()
+
+```
+
+#VISUALIZING DATA
+##ggplot
+
+```{r}
+ggplot(data4, aes(x = body_mass_g, y = bill_length_mm)) +
+  geom_point() +
+  theme_classic()
+
+```
+
+add some color
+```{r}
+p = ggplot(data4, aes(x = body_mass_g, y = bill_length_mm, 
+                      color = species, fill = species)) +
+  geom_point() +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_classic()
+
+```
+
+
+add shape
+```{r}
+ggplot(data4, aes(x = body_mass_g, y = bill_length_mm, 
+                      color = species, fill = species,
+                      shape = island)) +
+  geom_point() +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_classic()
+
+```
+
+add regression
+```{r}
+ggplot(data4, aes(x = body_mass_g, y = bill_length_mm, 
+                      color = species, fill = species,
+                      shape = island)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_classic()
+
+```
+
+facet wrap
+```{r}
+p1 = ggplot(data4, aes(x = body_mass_g, y = bill_length_mm, 
+                      color = species, fill = species,
+                      shape = island)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  facet_wrap(~sex)+
+  theme_classic()
+
+```
+
+facet grid
+```{r}
+ggplot(data4, aes(x = body_mass_g, y = bill_length_mm, 
+                      color = species, fill = species,
+                      shape = island)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  facet_grid(sex~island)+
+  theme_classic()
+
+```
+
+```{r}
+
+p2 = data4 %>% group_by(sex,body_grp) %>%
+  count() %>%
+ggplot(aes(x = sex, y = n, fill = body_grp, color = body_grp)) +
+  geom_col(alpha = 0.7) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_classic()
+  
+```
+
+##Plotly
+
+```{r}
+ply = ggplotly(p1)
+
+```
+
+##Patchwork
+```{r}
+patch1 = p1 + p2
+
+```
+
+```{r}
+p1/p2
+
+```
+
+```{r}
+(p2|p2)/p1
+```
+

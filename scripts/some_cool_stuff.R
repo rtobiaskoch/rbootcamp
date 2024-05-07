@@ -1,0 +1,1 @@
+print("This is fun. I am having fun.")
